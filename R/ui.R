@@ -17,9 +17,8 @@ ui <- fluidPage(
         includeCSS("www/CSS.css")
     ),
 
-    shinyWidgets::setSliderColor(rep(IlliniOrange, 13), seq(0, 13)),
-
     p(),
+
     fluidRow(column(4,
                     img(src = "University-Wordmark-Full-Color-RGB.png", height = 70),
     ),
@@ -95,6 +94,14 @@ ui <- fluidPage(
                                                                  value = 50,
                                                                  min = 10,
                                                                  max = 300),
+
+                                                     p(),
+
+                                                     sliderInput("digits2S",
+                                                                 "Number of decimal places for proportions:",
+                                                                 value = 3,
+                                                                 min = 2,
+                                                                 max = 5),
 
                                                      p(),
 
@@ -185,6 +192,14 @@ ui <- fluidPage(
                                                                  value = 50,
                                                                  min = 10,
                                                                  max = 300),
+
+                                                     p(),
+
+                                                     sliderInput("digits3S",
+                                                                 "Number of decimal places for proportions:",
+                                                                 value = 3,
+                                                                 min = 2,
+                                                                 max = 5),
                                               ),
 
                                               column(5,
@@ -209,12 +224,12 @@ ui <- fluidPage(
                                           value = 3,
 
                                           helpText(p(),
-                                        "This app is a companion to",
-                                          "'Bridging the method-theory gap in mediation analysis:",
-                                          "What does mediation reveal about individual people?'",
-                                          "(Bogdan, Cervantes & Regenwetter, 2021).",
-                                          p(),
-                                          ""
+                                                   "This app is a companion to",
+                                                   "'Bridging the model-theory gap in mediation analysis:",
+                                                   "What does mediation reveal about individual people?'",
+                                                   "(Bogdan, Cervantes & Regenwetter, 2021).",
+                                                   p(),
+                                                   ""
                                           )
 
                                  )
@@ -233,6 +248,12 @@ ui <- fluidPage(
                           column(6, align = "left",
                                  p(),
 
+                                 uiOutput("twoStepPartialMessage"),
+
+                                 p(),
+                                 br(),
+                                 p(),
+
                                  uiOutput("twoStepXMProbMessage"),
 
                                  p(),
@@ -247,71 +268,109 @@ ui <- fluidPage(
                                  br(),
                                  p(),
 
-                                 tableOutput("twoStepTable")
+                                 tableOutput("twoStepTable"),
 
                           ),
 
-                          column(6, align = "center",
-                                 rgl::rglwidgetOutput("twoStepPlot", width = 550)
+                          column(6, align = "right",
+                                 rgl::rglwidgetOutput("twoStepPlot", width = 550),
                           )
                       ),
 
                       fluidRow(
-                          column(12, align = "center",
-                                 textOutput("ellipsoid2SMessage")
-                          )
-                      ),
+                          p(),
+                          column(12, align = "center", htmlOutput("twoStepMatrixCaption")),
 
-
-
-                  ),
-
-                  conditionalPanel(
-                      condition = "input.analysisTabs == 2",
-                      fluidRow(
-                          column(6, align = "left",
-                                 p(),
-
-                                 uiOutput("threeStepXM1ProbMessage"),
-
-                                 p(),
-
-                                 uiOutput("threeStepM1M2ProbMessage"),
-
-                                 p(),
-
-                                 uiOutput("threeStepM2YProbMessage"),
-
-                                 p(),
-
-                                 uiOutput("threeStepXYProbMessage"),
-
-                                 p(),
-                                 br(),
-                                 p(),
-
-                                 tableOutput("threeStepTable")
-
+                          column(4, align = "center",
+                                 htmlOutput("twoStepCorMatrixCaption"),
+                                 plotOutput("twoStepCorMatrix", width = 220)
                           ),
-
-                          column(6, align = "center",
-                                 rgl::rglwidgetOutput("threeStepM1Plot", height = 350, width = 550),
-                                 rgl::rglwidgetOutput("threeStepM2Plot", height = 350, width = 550),
-
-                          )
-                      ),
-
-                      fluidRow(
+                          column(4, align = "center",
+                                 htmlOutput("twoStepFullMatrixCaption"),
+                                 plotOutput("twoStepFullMedMatrix", width = 220)
+                          ),
+                          column(4, align = "center",
+                                 htmlOutput("twoStepNoMatrixCaption"),
+                                 plotOutput("twoStepNoMedMatrix", width = 220)
+                          ),
+                          p(),
                           column(12, align = "center",
-                                 textOutput("ellipsoid3SMessage")
+                                 textOutput("ellipsoid2SMessage"),
                           )
-                      ),
-
+                      )
                   ),
 
 
+        conditionalPanel(
+            condition = "input.analysisTabs == 2",
+            fluidRow(
+                column(6, align = "left",
+                       p(),
 
-        )
+                       uiOutput("threeStepPartialMessage"),
+
+                       p(),
+                       br(),
+                       p(),
+
+                       uiOutput("threeStepXM1ProbMessage"),
+
+                       p(),
+
+                       uiOutput("threeStepM1M2ProbMessage"),
+
+                       p(),
+
+                       uiOutput("threeStepM2YProbMessage"),
+
+                       p(),
+
+                       uiOutput("threeStepXYProbMessage"),
+
+                       p(),
+                       br(),
+                       p(),
+
+                       tableOutput("threeStepTable")
+
+                ),
+
+                column(6, align = "center",
+                       rgl::rglwidgetOutput("threeStepM1Plot", height = 350, width = 550),
+                       rgl::rglwidgetOutput("threeStepM2Plot", height = 350, width = 550),
+
+                )
+            ),
+
+            fluidRow(
+                          p(),
+                          column(12, align = "center", htmlOutput("threeStepMatrixCaption")),
+            ),
+
+            fluidRow(
+                          column(4, align = "center",
+                                 htmlOutput("threeStepCorMatrixCaption"),
+                                 plotOutput("threeStepCorMatrix", width = 220)
+                          ),
+                          column(4, align = "center",
+                                 htmlOutput("threeStepFullMatrixCaption"),
+                                 plotOutput("threeStepFullMedMatrix", width = 220)
+                          ),
+                          column(4, align = "center",
+                                 htmlOutput("threeStepNoMatrixCaption"),
+                                 plotOutput("threeStepNoMedMatrix", width = 220)
+                          ),
+                          p(),
+                 column(12, align = "center",
+                       textOutput("ellipsoid3SMessage")
+                )
+            ),
+
+        ),
+
+
+
     )
+)
 )
 

@@ -6,8 +6,9 @@ library(shinyWidgets)
 library(tidyverse)
 library(rgl)
 library(kableExtra)
-
+library(corpcor)
 library(mvtnorm)
+library(corrplot)
 
 
 # # Illinois colours
@@ -18,10 +19,15 @@ IlliniAltOrg <- "#DD3403"
 IlliniArches <- "#009FD4"
 
 
+corMatricesBgPalette <- colorRampPalette(c(IlliniAltOrg, "white", IlliniBlue))(201)
+
 
 # Define server logic for random distribution app ----
 server <- function(input, output, session) {
 
+  # Digits for output
+  digits2S <- reactive(input$digits2S)
+  format2S <- reactive(paste0("%0.", digits2S(), "f"))
 
   # Update labels with correlations according with the respective slideBars ----
   # Two-step
@@ -86,10 +92,33 @@ server <- function(input, output, session) {
 
   # Reactive expression to check if the matrix is positive definite
   twoStepMatrix <- reactive({
-    matrix(c(1, corXM2S(), corXY2S(),
-             corXM2S(), 1, corMY2S(),
-             corXY2S(), corMY2S(), 1), nrow = 3)
+    mat <- matrix(c(1,         corXM2S(), corXY2S(),
+                    corXM2S(), 1,         corMY2S(),
+                    corXY2S(), corMY2S(), 1),
+
+                  nrow = 3)
   })
+
+  twoStepFullMedMatrix <- reactive({
+    matrix(c(1,                     corXM2S(), corXM2S() * corMY2S(),
+             corXM2S(),             1,         corMY2S(),
+             corXM2S() * corMY2S(), corMY2S(), 1),
+
+           nrow = 3)
+  })
+
+  twoStepNoMedMatrix <- reactive({
+    matrix(c(1,         0, corXY2S(),
+             0,         1, 0,
+             corXY2S(), 0, 1),
+
+           nrow = 3)
+  })
+
+  twoStepPcor <- reactive(cor2pcor(twoStepMatrix()))
+
+  pcorXY2S <- reactive(twoStepPcor()[1, 3])
+
 
   twoStepSimData <- reactive({
     mvtnorm::rmvnorm(n = input$n2S,
@@ -174,6 +203,18 @@ server <- function(input, output, session) {
   })
 
 
+  # Message for partial correlation
+  output$twoStepPartialMessage <- reactive({
+    if (isTwoStepSemiPosDef()) {
+      textPartial2S <- paste0("The partial correlation of X and Y is ",
+                              strong(sprintf(format2S(), round(pcorXY2S(), digits2S()))))
+    } else {
+      validate("The correlation matrix is not semi-positive definite. Change some correlation values.")
+    }
+
+    return(textPartial2S)
+  })
+
 
   # Messages for the proportions of 'satisfaction'
   #
@@ -189,10 +230,10 @@ server <- function(input, output, session) {
                          100 - input$cutOff2S, "% on M is ")
     }
 
-    textXM2S <- paste0(textXM2S, strong(sprintf("%0.2f", round(propXM2S(), 2))))
+    textXM2S <- paste0(textXM2S, strong(sprintf(format2S(), round(propXM2S(), digits2S()))))
 
     if (!isTwoStepSemiPosDef()) {
-      validate("The correlation matrix is not semi-positive definite. Change some correlation values.")
+      textXM2S <- ""
     }
 
     return(textXM2S)
@@ -211,7 +252,7 @@ server <- function(input, output, session) {
                          100 - input$cutOff2S, "% on Y is ")
     }
 
-    textMY2S <- paste0(textMY2S, strong(sprintf("%0.2f", round(propMY2S(), 2))))
+    textMY2S <- paste0(textMY2S, strong(sprintf(format2S(), round(propMY2S(), digits2S()))))
 
     if (!isTwoStepSemiPosDef()) {
       textMY2S <- ""
@@ -233,7 +274,7 @@ server <- function(input, output, session) {
                          100 - input$cutOff2S, "% on Y is ")
     }
 
-    textXY2S <- paste0(textXY2S, strong(sprintf("%0.2f", round(propXY2S(), 2))))
+    textXY2S <- paste0(textXY2S, strong(sprintf(format2S(), round(propXY2S(), digits2S()))))
 
     if (!isTwoStepSemiPosDef()) {
       textXY2S <- ""
@@ -440,28 +481,29 @@ server <- function(input, output, session) {
 
   output$twoStepTable <- function() ({
 
-    table2S <- data.frame(Violations = c('No violation', 'No violation', 'XM', 'XM', 'MY', 'MY', 'XM MY', 'XM MY'),
+    table2S <- data.frame(Violations = c('No violation', 'No violation', 'XM', 'XM', 'MY', 'MY', 'XM; MY', 'XM; MY'),
                           X = rep(c(checkmark, otimes), 4),
                           M = rep(c(checkmark, otimes, otimes, checkmark), 2),
                           Y = c(checkmark, otimes, otimes, checkmark, otimes, checkmark, checkmark, otimes),
-                          Actual = c(rep(sprintf("%.3f", round(.5 * twoStepDiagonal(), 3)), 2),
-                                     rep(sprintf("%.3f", round(.5 * twoStepBadXM(), 3)), 2),
-                                     rep(sprintf("%.3f", round(.5 * twoStepBadMY(), 3)), 2),
-                                     rep(sprintf("%.3f", round(.5 * twoStepBadXMY(), 3)), 2)),
-                          Complete = c(rep(round(.5 * twoStepMediation(), 3), 2),
-                                       rep(round(.5 * twoStepMediationBadXM(), 3), 2),
-                                       rep(round(.5 * twoStepMediationBadMY(), 3), 2),
-                                       rep(round(.5 * twoStepMediationBadXMY(), 3), 2)),
-                          NoM = c(rep(sprintf("%.3f", round((1 - (input$cutOff2S / 100)) * propXY2S(), 3)), 2),
-                                  rep(sprintf("%.3f", round((1 - (input$cutOff2S / 100)) * qropXY2S(), 3)), 2),
-                                  rep(sprintf("%.3f", round((1 - (input$cutOff2S / 100)) * qropXY2S(), 3)), 2),
-                                  rep(sprintf("%.3f", round((1 - (input$cutOff2S / 100)) * propXY2S(), 3)), 2)))
+                          Actual = c(rep(sprintf(format2S(), round(.5 * twoStepDiagonal(), digits2S())), 2),
+                                     rep(sprintf(format2S(), round(.5 * twoStepBadXM(), digits2S())), 2),
+                                     rep(sprintf(format2S(), round(.5 * twoStepBadMY(), digits2S())), 2),
+                                     rep(sprintf(format2S(), round(.5 * twoStepBadXMY(), digits2S())), 2)),
+                          Complete = c(rep(sprintf(format2S(), round(.5 * twoStepMediation(), digits2S())), 2),
+                                       rep(sprintf(format2S(), round(.5 * twoStepMediationBadXM(), digits2S())), 2),
+                                       rep(sprintf(format2S(), round(.5 * twoStepMediationBadMY(), digits2S())), 2),
+                                       rep(sprintf(format2S(), round(.5 * twoStepMediationBadXMY(), digits2S())), 2)),
+                          NoM = c(rep(sprintf(format2S(), round((1 - (input$cutOff2S / 100)) * propXY2S(), digits2S())), 2),
+                                  rep(sprintf(format2S(), round((1 - (input$cutOff2S / 100)) * qropXY2S(), digits2S())), 2),
+                                  rep(sprintf(format2S(), round((1 - (input$cutOff2S / 100)) * qropXY2S(), digits2S())), 2),
+                                  rep(sprintf(format2S(), round((1 - (input$cutOff2S / 100)) * propXY2S(), digits2S())), 2)))
 
 
     if (quantileGroup2S() != 0) {
 
-      table2S[nrow(table2S) + 1, -c(1:4)] <- 1 - colSums(apply(table2S[, -c(1:4)], 2, as.numeric))
-      table2S[nrow(table2S), 1:4] <- c('Non-extreme', rep('-', 3))
+      table2S[nrow(table2S) + 1, -c(1:4)] <- sprintf(format2S(),
+                                                     1 - colSums(apply(table2S[, -c(1:4)], 2, as.numeric)))
+      table2S[nrow(table2S), 1:4] <- c('Other', rep('-', 3))
 
     }
 
@@ -471,7 +513,7 @@ server <- function(input, output, session) {
                        'Pattern Violations',
                        'X', 'M', 'Y',
                        'Actual Proportion',
-                       'Complete Mediation',
+                       'Full Mediation',
                        'No Mediation'
                      )
     ) %>%
@@ -495,6 +537,103 @@ server <- function(input, output, session) {
 
 
   # Generate plots: X -> M -> Y ----
+
+  output$twoStepMatrixCaption <- reactive({
+    if (!isTwoStepSemiPosDef()) {
+      outText <- ""
+    } else {
+      outText <- as.character(h4(strong("Correlation matrices")))
+    }
+    return(outText)
+  })
+
+  output$twoStepCorMatrixCaption <- reactive({
+    if (!isTwoStepSemiPosDef()) {
+      outText <- ""
+    } else {
+      outText <- as.character(strong("Actual", br(), "correlations"))
+    }
+    return(outText)
+  })
+
+  output$twoStepFullMatrixCaption <- reactive({
+    if (!isTwoStepSemiPosDef()) {
+      outText <- ""
+    } else {
+      outText <- as.character(strong("Implied by", br(), "full mediation"))
+    }
+    return(outText)
+  })
+
+  output$twoStepNoMatrixCaption <- reactive({
+    if (!isTwoStepSemiPosDef()) {
+      outText <- ""
+    } else {
+      outText <- as.character(strong("Implied by", br(), "no mediation"))
+    }
+    return(outText)
+  })
+
+  output$twoStepCorMatrix <- renderPlot({
+    if (!isTwoStepSemiPosDef()) {
+    } else {
+      mat <- twoStepMatrix()
+      rownames(mat) <- colnames(mat) <- c("X", "M", "Y")
+      corrplot::corrplot(corr = mat,
+                         type = "lower", method = "color",
+                         diag = FALSE,
+                         number.cex = 1.5,
+                         addCoef.col = IlliniDkBlue,
+                         addgrid.col = IlliniDkBlue,
+                         cl.pos = FALSE,
+                         tl.cex = 1.4,
+                         tl.offset = 1,
+                         tl.srt = 0,
+                         tl.col = IlliniDkBlue,
+                         col = corMatricesBgPalette)
+    }
+  })
+
+  output$twoStepFullMedMatrix <- renderPlot({
+    if (!isTwoStepSemiPosDef()) {
+    } else {
+      mat <- twoStepFullMedMatrix()
+      rownames(mat) <- colnames(mat) <- c("X", "M", "Y")
+      corrplot::corrplot(corr = mat,
+                         type = "lower", method = "color",
+                         diag = FALSE,
+                         number.cex = 1.5,
+                         addCoef.col = IlliniDkBlue,
+                         addgrid.col = IlliniDkBlue,
+                         cl.pos = FALSE,
+                         tl.cex = 1.4,
+                         tl.offset = 1,
+                         tl.srt = 0,
+                         tl.col = IlliniDkBlue,
+                         col = corMatricesBgPalette)
+    }
+   })
+
+  output$twoStepNoMedMatrix <- renderPlot({
+     if (!isTwoStepSemiPosDef()) {
+    } else {
+      mat <- twoStepNoMedMatrix()
+      rownames(mat) <- colnames(mat) <- c("X", "M", "Y")
+      corrplot::corrplot(corr = mat,
+                         type = "lower", method = "color",
+                         diag = FALSE,
+                         number.cex = 1.5,
+                         addCoef.col = IlliniDkBlue,
+                         addgrid.col = IlliniDkBlue,
+                         cl.pos = FALSE,
+                         tl.cex = 1.4,
+                         tl.offset = 1,
+                         tl.srt = 0,
+                         tl.col = IlliniDkBlue,
+                         col = corMatricesBgPalette)
+    }
+  })
+
 
   output$twoStepPlot <- renderRglwidget({
 
@@ -592,6 +731,7 @@ server <- function(input, output, session) {
 
       }
 
+
       rglwidget()
     }
 
@@ -600,6 +740,10 @@ server <- function(input, output, session) {
 
 
   # # Three-Step mediation computations ----
+
+  # Digits for output
+  digits3S <- reactive(input$digits3S)
+  format3S <- reactive(paste0("%0.", digits3S(), "f"))
 
 
   # Reactive reading of the correlations and the percentile for defining the top (bottom) groups
@@ -615,11 +759,36 @@ server <- function(input, output, session) {
 
   # Reactive expression to check if the matrix is positive definite
   threeStepMatrix <- reactive({
-    matrix(c(1, corXM13S(), corXM23S(), corXY3S(),
-             corXM13S(), 1, corM1M23S(), corM1Y3S(),
-             corXM23S(), corM1M23S(), 1, corM2Y3S(),
-             corXY3S(), corM1Y3S(), corM2Y3S(), 1), nrow = 4)
+    matrix(c(1,          corXM13S(),  corXM23S(),  corXY3S(),
+             corXM13S(), 1,           corM1M23S(), corM1Y3S(),
+             corXM23S(), corM1M23S(), 1,           corM2Y3S(),
+             corXY3S(),  corM1Y3S(),  corM2Y3S(),  1),
+
+           nrow = 4)
   })
+
+  threeStepFullMedMatrix <- reactive({
+    matrix(c(1,                                     corXM13S(),               corXM13S() * corM1M23S(), corXM13S() * corM1M23S() * corM2Y3S(),
+             corXM13S(),                            1,                        corM1M23S(),              corM1M23S() * corM2Y3S(),
+             corXM13S() * corM1M23S(),              corM1M23S(),              1,                        corM2Y3S(),
+             corXM13S() * corM1M23S() * corM2Y3S(), corM1M23S() * corM2Y3S(), corM2Y3S(),               1),
+
+           nrow = 4)
+  })
+
+  threeStepNoMedMatrix <- reactive({
+    matrix(c(1,         0,           0,           corXY3S(),
+             0,         1,           corM1M23S(), 0,
+             0,         corM1M23S(), 1,           0,
+             corXY3S(), 0,           0,           1),
+
+           nrow = 4)
+  })
+
+  threeStepPcor <- reactive(cor2pcor(threeStepMatrix()))
+
+  pcorXY3S <- reactive(threeStepPcor()[1, 4])
+
 
   threeStepSimData <- reactive({
     mvtnorm::rmvnorm(n = input$n3S,
@@ -645,41 +814,6 @@ server <- function(input, output, session) {
     return(propXM13S)
   })
 
-  propXM23S <- reactive({
-    if (quantileGroup3S() == 0) {
-      propXM23S <- .25 + (asin(abs(corXM23S()))) / (2 * pi)
-    } else {
-      propXM23S <- mvtnorm::pmvnorm(lower = c(quantileGroup3S(), quantileGroup3S()),
-                                    upper = c(Inf, Inf),
-                                    mean = c(0, 0),
-                                    corr = abs(threeStepMatrix()[c(1, 3), c(1, 3)]))
-    }
-    return(propXM23S)
-  })
-
-  propM1Y3S <- reactive({
-    if (quantileGroup3S() == 0) {
-      propM1Y3S <- .25 + (asin(abs(corM1Y3S()))) / (2 * pi)
-    } else {
-      propM1Y3S <- mvtnorm::pmvnorm(lower = c(quantileGroup3S(), quantileGroup3S()),
-                                    upper = c(Inf, Inf),
-                                    mean = c(0, 0),
-                                    corr = abs(threeStepMatrix()[c(2, 4), c(2, 4)]))
-    }
-    return(propM1Y3S)
-  })
-
-  propM2Y3S <- reactive({
-    if (quantileGroup3S() == 0) {
-      propM2Y3S <- .25 + (asin(abs(corM2Y3S()))) / (2 * pi)
-    } else {
-      propM2Y3S <- mvtnorm::pmvnorm(lower = c(quantileGroup3S(), quantileGroup3S()),
-                                    upper = c(Inf, Inf),
-                                    mean = c(0, 0),
-                                    corr = abs(threeStepMatrix()[c(3, 4), c(3, 4)]))
-    }
-    return(propM2Y3S)
-  })
 
   propM1M23S <- reactive({
     if (quantileGroup3S() == 0) {
@@ -704,6 +838,18 @@ server <- function(input, output, session) {
                                                      -corM1M23S(), 1), nrow = 2))
     }
     return(propM1M23S)
+  })
+
+  propM2Y3S <- reactive({
+    if (quantileGroup3S() == 0) {
+      propM2Y3S <- .25 + (asin(abs(corM2Y3S()))) / (2 * pi)
+    } else {
+      propM2Y3S <- mvtnorm::pmvnorm(lower = c(quantileGroup3S(), quantileGroup3S()),
+                                    upper = c(Inf, Inf),
+                                    mean = c(0, 0),
+                                    corr = abs(threeStepMatrix()[c(3, 4), c(3, 4)]))
+    }
+    return(propM2Y3S)
   })
 
   corXY3SSign <- reactive({
@@ -741,6 +887,20 @@ server <- function(input, output, session) {
 
 
 
+  # Message for partial correlation
+  output$threeStepPartialMessage <- reactive({
+    if (isThreeStepSemiPosDef()) {
+      textPartial3S <- paste0("The partial correlation of X and Y is ",
+                              strong(sprintf(format3S(), round(pcorXY3S(), digits3S()))))
+    } else {
+      validate("The correlation matrix is not semi-positive definite. Change some correlation values.")
+    }
+
+    return(textPartial3S)
+  })
+
+
+
   # Messages for the proportions of 'satisfaction'
   #
   # X-M1 pair
@@ -755,10 +915,10 @@ server <- function(input, output, session) {
                           100 - input$cutOff3S, "% on M", tags$sub(1)," is ")
     }
 
-    textXM13S <- paste0(textXM13S, strong(sprintf("%0.2f", round(propXM13S(), 2))))
+    textXM13S <- paste0(textXM13S, strong(sprintf(format3S(), round(propXM13S(), digits3S()))))
 
     if (!isThreeStepSemiPosDef()) {
-      validate("The correlation matrix is not semi-positive definite. Change some correlation values.")
+      textXM13S <- ""
     }
 
     return(textXM13S)
@@ -776,7 +936,7 @@ server <- function(input, output, session) {
                           100 - input$cutOff3S, "% on M", tags$sub(2)," is ")
     }
 
-    textXM23S <- paste0(textXM23S, strong(sprintf("%0.2f", round(propXM23S(), 2))))
+    textXM23S <- paste0(textXM23S, strong(sprintf(format3S(), round(propXM23S(), digits3S()))))
 
     if (!isThreeStepSemiPosDef()) {
       textXM23S <- ""
@@ -798,7 +958,7 @@ server <- function(input, output, session) {
                           100 - input$cutOff3S, "% on Y is ")
     }
 
-    textM1Y3S <- paste0(textM1Y3S, strong(sprintf("%0.2f", round(propM1Y3S(), 2))))
+    textM1Y3S <- paste0(textM1Y3S, strong(sprintf(format3S(), round(propM1Y3S(), digits3S()))))
 
     if (!isThreeStepSemiPosDef()) {
       textM1Y3S <- ""
@@ -820,7 +980,7 @@ server <- function(input, output, session) {
                           100 - input$cutOff3S, "% on Y is ")
     }
 
-    textM2Y3S <- paste0(textM2Y3S, strong(sprintf("%0.2f", round(propM2Y3S(), 2))))
+    textM2Y3S <- paste0(textM2Y3S, strong(sprintf(format3S(), round(propM2Y3S(), digits3S()))))
 
     if (!isThreeStepSemiPosDef()) {
       textM2Y3S <- ""
@@ -842,7 +1002,7 @@ server <- function(input, output, session) {
                            100 - input$cutOff3S, "% on M", tags$sub(2)," is ")
     }
 
-    textM1M23S <- paste0(textM1M23S, strong(sprintf("%0.2f", round(propM1M23S(), 2))))
+    textM1M23S <- paste0(textM1M23S, strong(sprintf(format3S(), round(propM1M23S(), digits3S()))))
 
     if (!isThreeStepSemiPosDef()) {
       textM1M23S <- ""
@@ -864,7 +1024,7 @@ server <- function(input, output, session) {
                          100 - input$cutOff3S, "% on Y is ")
     }
 
-    textXY3S <- paste0(textXY3S, strong(sprintf("%0.2f", round(propXY3S(), 2))))
+    textXY3S <- paste0(textXY3S, strong(sprintf(format3S(), round(propXY3S(), 2))))
 
     if (!isThreeStepSemiPosDef()) {
       textXY3S <- ""
@@ -1321,12 +1481,12 @@ server <- function(input, output, session) {
 
     table3S <- data.frame(Violations = c('No violation', 'No violation',
                                          paste0('XM', tags$sub(1)), paste0('XM', tags$sub(1)),
-                                         paste0('XM', tags$sub(1), ' M', tags$sub(1), 'M', tags$sub(2)), paste0('XM', tags$sub(1), ' M', tags$sub(1), 'M', tags$sub(2)),
-                                         paste0('M', tags$sub(1), 'M', tags$sub(2), ' M', tags$sub(2), 'Y'), paste0('M', tags$sub(1), 'M', tags$sub(2), ' M', tags$sub(2), 'Y'),
+                                         paste0('XM', tags$sub(1), '; M', tags$sub(1), 'M', tags$sub(2)), paste0('XM', tags$sub(1), '; M', tags$sub(1), 'M', tags$sub(2)),
+                                         paste0('M', tags$sub(1), 'M', tags$sub(2), '; M', tags$sub(2), 'Y'), paste0('M', tags$sub(1), 'M', tags$sub(2), '; M', tags$sub(2), 'Y'),
                                          paste0('M', tags$sub(2), 'Y'), paste0('M', tags$sub(2), 'Y'),
                                          paste0('M', tags$sub(1), 'M', tags$sub(2)), paste0('M', tags$sub(1), 'M', tags$sub(2)),
-                                         paste0('XM', tags$sub(1), ' M', tags$sub(2), 'Y'), paste0('XM', tags$sub(1), ' M', tags$sub(2), 'Y'),
-                                         paste0('XM', tags$sub(1), ' M', tags$sub(1), 'M', tags$sub(2), ' M', tags$sub(2), 'Y'), paste0('XM', tags$sub(1), ' M', tags$sub(1), 'M', tags$sub(2), ' M', tags$sub(2), 'Y')
+                                         paste0('XM', tags$sub(1), '; M', tags$sub(2), 'Y'), paste0('XM', tags$sub(1), '; M', tags$sub(2), 'Y'),
+                                         paste0('XM', tags$sub(1), '; M', tags$sub(1), 'M', tags$sub(2), '; M', tags$sub(2), 'Y'), paste0('XM', tags$sub(1), '; M', tags$sub(1), 'M', tags$sub(2), '; M', tags$sub(2), 'Y')
     ),
     X = rep(c(checkmark, otimes), 8),
     M1 = c(checkmark, otimes, otimes, checkmark, otimes, checkmark, checkmark, otimes,
@@ -1335,35 +1495,36 @@ server <- function(input, output, session) {
            otimes, checkmark, checkmark, otimes),
     Y = c(checkmark, otimes, otimes, checkmark, checkmark, otimes, checkmark, otimes,
           otimes, checkmark, otimes, checkmark, checkmark, otimes, otimes, checkmark),
-    Actual = c(rep(sprintf("%.3f", round(threeStepDiagonal(), 3)), 2),
-               rep(sprintf("%.3f", round(threeStepBadXM1(), 3)), 2),
-               rep(sprintf("%.3f", round(threeStepBadXM1M1M2(), 3)), 2),
-               rep(sprintf("%.3f", round(threeStepBadM1M2M2Y(), 3)), 2),
-               rep(sprintf("%.3f", round(threeStepBadM2Y(), 3)), 2),
-               rep(sprintf("%.3f", round(threeStepBadM1M2(), 3)), 2),
-               rep(sprintf("%.3f", round(threeStepBadXM1M2Y(), 3)), 2),
-               rep(sprintf("%.3f", round(threeStepBadXM1M1M2M2Y(), 3)), 2)),
-    Complete = c(rep(sprintf("%.3f", round(threeStepMediation(), 3)), 2),
-                 rep(sprintf("%.3f", round(threeStepMediationBadXM1(), 3)), 2),
-                 rep(sprintf("%.3f", round(threeStepMediationBadXM1M1M2(), 3)), 2),
-                 rep(sprintf("%.3f", round(threeStepMediationBadM1M2M2Y(), 3)), 2),
-                 rep(sprintf("%.3f", round(threeStepMediationBadM2Y(), 3)), 2),
-                 rep(sprintf("%.3f", round(threeStepMediationBadM1M2(), 3)), 2),
-                 rep(sprintf("%.3f", round(threeStepMediationBadXM1M2Y(), 3)), 2),
-                 rep(sprintf("%.3f", round(threeStepMediationBadXM1M1M2M2Y(), 3)), 2)),
-    NoM = c(rep(sprintf("%.3f", round(propM1M23S() * propXY3S(), 3)), 2),
-            rep(sprintf("%.3f", round(propM1M23S() * qropXY3S(), 3)), 2),
-            rep(sprintf("%.3f", round(qropM1M23S() * propXY3S(), 3)), 2),
-            rep(sprintf("%.3f", round(qropM1M23S() * propXY3S(), 3)), 2),
-            rep(sprintf("%.3f", round(propM1M23S() * qropXY3S(), 3)), 2),
-            rep(sprintf("%.3f", round(qropM1M23S() * qropXY3S(), 3)), 2),
-            rep(sprintf("%.3f", round(propM1M23S() * propXY3S(), 3)), 2),
-            rep(sprintf("%.3f", round(qropM1M23S() * qropXY3S(), 3)), 2)))
+    Actual = c(rep(sprintf(format3S(), round(threeStepDiagonal(), digits3S())), 2),
+               rep(sprintf(format3S(), round(threeStepBadXM1(), digits3S())), 2),
+               rep(sprintf(format3S(), round(threeStepBadXM1M1M2(), digits3S())), 2),
+               rep(sprintf(format3S(), round(threeStepBadM1M2M2Y(), digits3S())), 2),
+               rep(sprintf(format3S(), round(threeStepBadM2Y(), digits3S())), 2),
+               rep(sprintf(format3S(), round(threeStepBadM1M2(), digits3S())), 2),
+               rep(sprintf(format3S(), round(threeStepBadXM1M2Y(), digits3S())), 2),
+               rep(sprintf(format3S(), round(threeStepBadXM1M1M2M2Y(), digits3S())), 2)),
+    Complete = c(rep(sprintf(format3S(), round(threeStepMediation(), digits3S())), 2),
+                 rep(sprintf(format3S(), round(threeStepMediationBadXM1(), digits3S())), 2),
+                 rep(sprintf(format3S(), round(threeStepMediationBadXM1M1M2(), digits3S())), 2),
+                 rep(sprintf(format3S(), round(threeStepMediationBadM1M2M2Y(), digits3S())), 2),
+                 rep(sprintf(format3S(), round(threeStepMediationBadM2Y(), digits3S())), 2),
+                 rep(sprintf(format3S(), round(threeStepMediationBadM1M2(), digits3S())), 2),
+                 rep(sprintf(format3S(), round(threeStepMediationBadXM1M2Y(), digits3S())), 2),
+                 rep(sprintf(format3S(), round(threeStepMediationBadXM1M1M2M2Y(), digits3S())), 2)),
+    NoM = c(rep(sprintf(format3S(), round(propM1M23S() * propXY3S(), digits3S())), 2),
+            rep(sprintf(format3S(), round(propM1M23S() * qropXY3S(), digits3S())), 2),
+            rep(sprintf(format3S(), round(qropM1M23S() * propXY3S(), digits3S())), 2),
+            rep(sprintf(format3S(), round(qropM1M23S() * propXY3S(), digits3S())), 2),
+            rep(sprintf(format3S(), round(propM1M23S() * qropXY3S(), digits3S())), 2),
+            rep(sprintf(format3S(), round(qropM1M23S() * qropXY3S(), digits3S())), 2),
+            rep(sprintf(format3S(), round(propM1M23S() * propXY3S(), digits3S())), 2),
+            rep(sprintf(format3S(), round(qropM1M23S() * qropXY3S(), digits3S())), 2)))
 
     if (quantileGroup3S() != 0) {
 
-      table3S[nrow(table3S) + 1, -c(1:5)] <- 1 - colSums(apply(table3S[, -c(1:5)], 2, as.numeric))
-      table3S[nrow(table3S), 1:5] <- c('Non-extreme', rep('-', 4))
+      table3S[nrow(table3S) + 1, -c(1:5)] <- sprintf(format3S(),
+                                                     1 - colSums(apply(table3S[, -c(1:5)], 2, as.numeric)))
+      table3S[nrow(table3S), 1:5] <- c('Other', rep('-', 4))
 
     }
 
@@ -1373,7 +1534,7 @@ server <- function(input, output, session) {
             'Pattern Violations',
             'X', paste0('M', tags$sub(1)), paste0('M', tags$sub(2)), 'Y',
             'Actual Proportion',
-            'Complete Mediation',
+            'Full Mediation',
             'No Mediation'
           )
     ) %>%
@@ -1396,7 +1557,104 @@ server <- function(input, output, session) {
 
 
 
-  # Generate two-step plots: X -> M1 -> Y and X -> M2 -> Y----
+  # Generate three-step plots: X -> M1 -> Y and X -> M2 -> Y----
+
+  output$threeStepMatrixCaption <- reactive({
+    if (!isThreeStepSemiPosDef()) {
+      outText <- ""
+    } else {
+      outText <- as.character(h4(strong("Correlation matrices")))
+    }
+    return(outText)
+  })
+
+  output$threeStepCorMatrixCaption <- reactive({
+    if (!isThreeStepSemiPosDef()) {
+      outText <- ""
+    } else {
+      outText <- as.character(strong("Actual", br(), "correlations"))
+    }
+    return(outText)
+  })
+
+  output$threeStepFullMatrixCaption <- reactive({
+    if (!isThreeStepSemiPosDef()) {
+      outText <- ""
+    } else {
+      outText <- as.character(strong("Implied by", br(), "full mediation"))
+    }
+    return(outText)
+  })
+
+  output$threeStepNoMatrixCaption <- reactive({
+    if (!isThreeStepSemiPosDef()) {
+      outText <- ""
+    } else {
+      outText <- as.character(strong("Implied by", br(), "no mediation"))
+    }
+    return(outText)
+  })
+
+  output$threeStepCorMatrix <- renderPlot({
+    if (!isThreeStepSemiPosDef()) {
+    } else {
+      mat <- threeStepMatrix()
+      rownames(mat) <- colnames(mat) <- c("X", "M_1", "M_2", "Y")
+      corrplot::corrplot(corr = mat,
+                         type = "lower", method = "color",
+                         diag = FALSE,
+                         number.cex = 1.5,
+                         addCoef.col = IlliniDkBlue,
+                         addgrid.col = IlliniDkBlue,
+                         cl.pos = FALSE,
+                         tl.cex = 1.4,
+                         tl.offset = 1,
+                         tl.srt = 0,
+                         tl.col = IlliniDkBlue,
+                         col = corMatricesBgPalette)
+    }
+  })
+
+  output$threeStepFullMedMatrix <- renderPlot({
+    if (!isThreeStepSemiPosDef()) {
+    } else {
+      mat <- threeStepFullMedMatrix()
+      rownames(mat) <- colnames(mat) <- c("X", "M_1", "M_2", "Y")
+      corrplot::corrplot(corr = mat,
+                         type = "lower", method = "color",
+                         diag = FALSE,
+                         number.cex = 1.5,
+                         addCoef.col = IlliniDkBlue,
+                         addgrid.col = IlliniDkBlue,
+                         cl.pos = FALSE,
+                         tl.cex = 1.4,
+                         tl.offset = 1,
+                         tl.srt = 0,
+                         tl.col = IlliniDkBlue,
+                         col = corMatricesBgPalette)
+    }
+  })
+
+  output$threeStepNoMedMatrix <- renderPlot({
+    if (!isThreeStepSemiPosDef()) {
+    } else {
+      mat <- threeStepNoMedMatrix()
+      rownames(mat) <- colnames(mat) <- c("X", "M_1", "M_2", "Y")
+      corrplot::corrplot(corr = mat,
+                         type = "lower", method = "color",
+                         diag = FALSE,
+                         number.cex = 1.5,
+                         addCoef.col = IlliniDkBlue,
+                         addgrid.col = IlliniDkBlue,
+                         cl.pos = FALSE,
+                         tl.cex = 1.4,
+                         tl.offset = 1,
+                         tl.srt = 0,
+                         tl.col = IlliniDkBlue,
+                         col = corMatricesBgPalette)
+    }
+  })
+
 
   output$threeStepM1Plot <- renderRglwidget({
 
