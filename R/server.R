@@ -705,12 +705,12 @@ server <- function(input, output, session) {
       }
 
       if (input$cubes2S) {
-        cubeT <- cube3d(col = IlliniOrange, alpha = 0.2)
+        cubeT <- cube3d(col = "grey", alpha = 0.2)
         cubeT$vb[cubeT$vb == -1] <- 0
         cubeT$vb[4,  ] <- 1 / (3 - quantileGroup2S())
         cubeT$vb[-4, ] <- cubeT$vb[-4, ] + (quantileGroup2S() / (3 - quantileGroup2S()))
 
-        cubeB <- cube3d(col = IlliniArches, alpha = 0.25)
+        cubeB <- cube3d(col = "grey", alpha = 0.25)
         cubeB$vb[cubeB$vb ==  1] <- 0
         cubeB$vb[4,  ] <- 1 / (3 - quantileGroup2S())
         cubeB$vb[-4, ] <- cubeB$vb[-4, ] - (quantileGroup2S() / (3 - quantileGroup2S()))
@@ -1727,12 +1727,12 @@ server <- function(input, output, session) {
       }
 
       if (input$cubes3S) {
-        cubeT <- cube3d(col = IlliniOrange, alpha = 0.2)
+        cubeT <- cube3d(col = "grey", alpha = 0.2)
         cubeT$vb[cubeT$vb == -1] <- 0
         cubeT$vb[4,  ] <- 1 / (3 - quantileGroup3S())
         cubeT$vb[-4, ] <- cubeT$vb[-4, ] + (quantileGroup3S() / (3 - quantileGroup3S()))
 
-        cubeB <- cube3d(col = IlliniArches, alpha = 0.25)
+        cubeB <- cube3d(col = "grey", alpha = 0.25)
         cubeB$vb[cubeB$vb ==  1] <- 0
         cubeB$vb[4,  ] <- 1 / (3 - quantileGroup3S())
         cubeB$vb[-4, ] <- cubeB$vb[-4, ] - (quantileGroup3S() / (3 - quantileGroup3S()))
@@ -1824,12 +1824,12 @@ server <- function(input, output, session) {
       }
 
       if (input$cubes3S) {
-        cubeT <- cube3d(col = IlliniOrange, alpha = 0.2)
+        cubeT <- cube3d(col = "grey", alpha = 0.2)
         cubeT$vb[cubeT$vb == -1] <- 0
         cubeT$vb[4,  ] <- 1 / (3 - quantileGroup3S())
         cubeT$vb[-4, ] <- cubeT$vb[-4, ] + (quantileGroup3S() / (3 - quantileGroup3S()))
 
-        cubeB <- cube3d(col = IlliniArches, alpha = 0.25)
+        cubeB <- cube3d(col = "grey", alpha = 0.25)
         cubeB$vb[cubeB$vb ==  1] <- 0
         cubeB$vb[4,  ] <- 1 / (3 - quantileGroup3S())
         cubeB$vb[-4, ] <- cubeB$vb[-4, ] - (quantileGroup3S() / (3 - quantileGroup3S()))
