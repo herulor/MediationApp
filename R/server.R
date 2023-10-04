@@ -1,6 +1,9 @@
+# Preamble ----
+
 # Must be executed BEFORE rgl is loaded on headless devices.
 options(rgl.useNULL = TRUE)
 
+## Load packages ----
 library(shiny)
 library(shinyWidgets)
 library(tidyverse)
@@ -10,8 +13,9 @@ library(corpcor)
 library(mvtnorm)
 library(corrplot)
 
+## Global variables ----
 
-# # Illinois colours
+### Illinois colours ----
 IlliniOrange <- "#FF552E"
 IlliniDkBlue <- "#13294B"
 IlliniBlue   <- "#7FC3E1"
@@ -19,71 +23,367 @@ IlliniAltOrg <- "#DD3403"
 IlliniArches <- "#009FD4"
 
 
+### Other colors ----
 corMatricesBgPalette <- colorRampPalette(c(IlliniAltOrg, "white", IlliniBlue))(201)
 
 
-# Define server logic for random distribution app ----
+## Functions ----
+
+
+computeLowerBound <- function(proportion, sampleSize, conf.level = .95) {
+    alpha <- 1 - conf.level
+    qbeta(p = alpha / 2,
+          shape1 = sampleSize * proportion,
+          shape2 = sampleSize * (1 - proportion) + 1
+    )
+}
+
+computeUpperBound <- function(proportion, sampleSize, conf.level = .95) {
+    alpha <- 1 - conf.level
+    qbeta(p = 1 - alpha / 2,
+          shape1 = sampleSize * proportion + 1,
+          shape2 = sampleSize * (1 - proportion)
+    )
+}
+
+# Compute two-step probabilities
+computeTwoStepTable <- function(corXM = 0, corMY = 0, corXY = 0,
+                                quantileGroup = 0, sampleSize = NULL) {
+
+    twoStepMatrix <- matrix(c(1,     corXM, corXY,
+                              corXM, 1,     corMY,
+                              corXY, corMY, 1),
+                            nrow = 3)
+
+  isTwoStepSemiPosDef <- all(eigen(twoStepMatrix)$values > -10 * .Machine$double.eps)
+
+    signCorXY <- ifelse(sign(corXM) * sign(corMY) == 0,
+             1,
+             sign(corXM) * sign(corMY)
+      )
+
+    propXM <- .25 + (asin(abs(corXM))) / (2 * pi)
+    propMY <- .25 + (asin(abs(corMY))) / (2 * pi)
+    propXY <- .25 + (asin(signCorXY * corXY)) / (2 * pi)
+
+  if (quantileGroup == 0) {
+    twoStepGood   <- .5 * ( propXM + propMY + propXY - .5)
+    twoStepBadXM  <- .5 * (-propXM + propMY - propXY + .5)
+    twoStepBadMY  <- .5 * ( propXM - propMY - propXY + .5)
+    twoStepBadXMY <- .5 * (-propXM - propMY + propXY + .5)
+  } else {
+      signXM <- sign(corXM)
+      signMY <- sign(corMY)
+
+      lowerDiag <- c(-Inf,
+                     ifelse(signXM >= 0,
+                            -Inf,
+                            quantileGroup),
+                     ifelse((signXM * signMY) >= 0,
+                            -Inf,
+                            quantileGroup))
+
+      upperDiag <- c(-quantileGroup,
+                     ifelse(signXM < 0,
+                            Inf,
+                            -quantileGroup),
+                     ifelse((signXM * signMY) < 0,
+                            Inf,
+                            -quantileGroup))
+
+      lowerBadXM <- c(-Inf,
+                      ifelse(signXM < 0,
+                             -Inf,
+                             quantileGroup),
+                      ifelse((signXM * signMY) < 0,
+                             -Inf,
+                             quantileGroup))
+
+      upperBadXM <- c(-quantileGroup,
+                      ifelse(signXM >= 0,
+                             Inf,
+                             -quantileGroup),
+                      ifelse((signXM * signMY) >= 0,
+                      Inf,
+                      -quantileGroup))
+
+      lowerBadMY <- c(-Inf,
+                      ifelse(signXM >= 0,
+                             -Inf,
+                             quantileGroup),
+                      ifelse((signXM * signMY) < 0,
+                             -Inf,
+                             quantileGroup))
+
+      upperBadMY <- c(-quantileGroup,
+                      ifelse(signXM < 0,
+                             Inf,
+                             -quantileGroup),
+                      ifelse((signXM * signMY) >= 0,
+                             Inf,
+                             -quantileGroup))
+
+      lowerBadXMY <- c(-Inf,
+                       ifelse(signXM < 0,
+                              -Inf,
+                              quantileGroup),
+                       ifelse((signXM * signMY) >= 0,
+                              -Inf,
+                              quantileGroup))
+
+      upperBadXMY <- c(-quantileGroup,
+                       ifelse(signXM >= 0,
+                              Inf,
+                              -quantileGroup),
+                       ifelse((signXM * signMY) < 0,
+                       Inf,
+                       -quantileGroup))
+
+
+      twoStepGood  <- mvtnorm::pmvnorm(lower = lowerDiag, upper = upperDiag,
+                                                    mean = c(0, 0, 0),
+                                                    corr = twoStepMatrix)[1]
+
+      twoStepBadXM <- mvtnorm::pmvnorm(lower = lowerBadXM, upper = upperBadXM,
+                                                    mean = c(0, 0, 0),
+                                                    corr = twoStepMatrix)[1]
+
+
+      twoStepBadMY <- mvtnorm::pmvnorm(lower = lowerBadMY, upper = upperBadMY,
+                                                    mean = c(0, 0, 0),
+                                                    corr = twoStepMatrix)[1]
+
+
+      twoStepBadXMY <- mvtnorm::pmvnorm(lower = lowerBadXMY, upper = upperBadXMY,
+                                                    mean = c(0, 0, 0),
+                                                    corr = twoStepMatrix)[1]
+    }
+
+    if (!isTwoStepSemiPosDef) {
+      tableProportions <- rep(NA, 4)
+    } else {
+      tableProportions <- c(twoStepGood, twoStepBadXM, twoStepBadMY, twoStepBadXMY)
+    }
+
+    names(tableProportions) <-
+              c("twoStepGood",
+                "twoStepBadXM",
+                "twoStepBadMY",
+                "twoStepBadXMY")
+
+    return(tableProportions)
+}
+
+
+# Simulate 500 samples with given sample size and correlations
+samplesSimulation <- function(corXM = 0, corMY = 0, corXY = 0,
+                              sampleSize = NULL) {
+
+  if (is.null(sampleSize)) {
+    return(NA)
+  }
+
+  twoStepMatrix <- matrix(c(1,     corXM, corXY,
+                            corXM, 1,     corMY,
+                            corXY, corMY, 1),
+                          nrow = 3)
+
+  mvtnorm::rmvnorm(n = 1500 * sampleSize,
+                   mean = c(0, 0, 0),
+                   sigma = twoStepMatrix) |>
+    data.frame() |>
+    mutate(sample_id = rep(1:1500, each = sampleSize)) |>
+    group_by(sample_id) |>
+    summarise(corXM = cor(X1, X2),
+              corMY = cor(X2, X3),
+              corXY = cor(X1, X3))
+
+}
+
+twoStepDistribution <- function(corXM = 0, corMY = 0, corXY = 0,
+                                sampleSize = NULL,
+                                quantileGroup = 0) {
+
+  vecComputeTwoStepTable <- function(x, quantileGroup = 0) {
+    computeTwoStepTable(corXM = x["corXM"],
+                        corMY = x["corMY"],
+                        corXY = x["corXY"],
+                        quantileGroup = quantileGroup)
+  }
+
+  samples <- samplesSimulation(corXM = corXM, corMY = corMY, corXY = corXY,
+                               sampleSize = sampleSize)
+
+  samples %>%
+    select(!sample_id) |>
+    apply(1, vecComputeTwoStepTable) |>
+    t() |>
+    as_tibble() |>
+    summarise(across(everything(), list(lower = ~ quantile(.x, .025),
+                                        upper = ~ quantile(.x, .975)))
+    ) |>
+    rename_with(.fn = ~ str_replace(.,
+                                    "([[:alpha:]]*)_([[:alpha:]]*)",
+                                    "\\2_\\1")) |>
+    pivot_longer(cols = everything(),
+                 names_sep = "_",
+                 names_to = c(".value", "type"))
+}
+
+
+# Define server logic for app ----
 server <- function(input, output, session) {
 
   # Digits for output
   digits2S <- reactive(input$digits2S)
   format2S <- reactive(paste0("%0.", digits2S(), "f"))
 
-  # Update labels with correlations according with the respective slideBars ----
-  # Two-step
+  ## Update correlations according with the respective slideBars and textInputs ----
+
+  ### Two-step ----
+  observeEvent(input$XM2ScorText, {
+    if (!is.na(as.numeric(input$XM2ScorText))) {
+        if (-1 <= as.numeric(input$XM2ScorText) & as.numeric(input$XM2ScorText <= 1)) {
+            updateSliderInput(session, "XM2Scor", value = as.numeric(input$XM2ScorText))
+        }
+    }
+  })
+
   observeEvent(input$XM2Scor, {
-    label <- paste0("X-M = ", sprintf("%.2f", input$XM2Scor))
-    updateSliderInput(session, "XM2Scor", label = label)
+    updateTextInput(session, "XM2ScorText", value = input$XM2Scor)
+  })
+
+  observeEvent(input$MY2ScorText, {
+    if (!is.na(as.numeric(input$MY2ScorText))) {
+        if (-1 <= as.numeric(input$MY2ScorText) & as.numeric(input$MY2ScorText <= 1)) {
+            updateSliderInput(session, "MY2Scor", value = as.numeric(input$MY2ScorText))
+        }
+    }
   })
 
   observeEvent(input$MY2Scor, {
-    label <- paste0("M-Y = ", sprintf("%.2f", input$MY2Scor))
-    updateSliderInput(session, "MY2Scor", label = label)
+    updateTextInput(session, "MY2ScorText", value = input$MY2Scor)
+  })
+
+  observeEvent(input$XY2ScorText, {
+    if (!is.na(as.numeric(input$XY2ScorText))) {
+        if (-1 <= as.numeric(input$XY2ScorText) & as.numeric(input$XY2ScorText <= 1)) {
+            updateSliderInput(session, "XY2Scor", value = as.numeric(input$XY2ScorText))
+        }
+    }
   })
 
   observeEvent(input$XY2Scor, {
-    label <- paste0("X-Y = ", sprintf("%.2f", input$XY2Scor))
-    updateSliderInput(session, "XY2Scor", label = label)
+    updateTextInput(session, "XY2ScorText", value = input$XY2Scor)
   })
 
-  # Three-step
+  observeEvent(input$resetInput2, {
+    updateSliderInput(session, "XM2Scor", value = 0)
+    updateSliderInput(session, "MY2Scor", value = 0)
+    updateSliderInput(session, "XY2Scor", value = 0)
+  })
+
+  ### Three-step ----
+  observeEvent(input$XY3ScorText, {
+    if (!is.na(as.numeric(input$XY3ScorText))) {
+        if (-1 <= as.numeric(input$XY3ScorText) & as.numeric(input$XY3ScorText <= 1)) {
+            updateSliderInput(session, "XY3Scor", value = as.numeric(input$XY3ScorText))
+        }
+    }
+  })
+
   observeEvent(input$XY3Scor, {
-    label <- paste0("X-Y = ", sprintf("%.2f", input$XY3Scor))
-    updateSliderInput(session, "XY3Scor", label = label)
+    updateTextInput(session, "XY3ScorText", value = input$XY3Scor)
+  })
+
+  observeEvent(input$XM13ScorText, {
+    if (!is.na(as.numeric(input$XM13ScorText))) {
+        if (-1 <= as.numeric(input$XM13ScorText) & as.numeric(input$XM13ScorText <= 1)) {
+            updateSliderInput(session, "XM13Scor", value = as.numeric(input$XM13ScorText))
+        }
+    }
   })
 
   observeEvent(input$XM13Scor, {
-    label <- paste0("X-M1 = ", sprintf("%.2f", input$XM13Scor))
-    updateSliderInput(session, "XM13Scor", label = label)
+    updateTextInput(session, "XM13ScorText", value = input$XM13Scor)
+  })
+
+  observeEvent(input$M1Y3ScorText, {
+    if (!is.na(as.numeric(input$M1Y3ScorText))) {
+        if (-1 <= as.numeric(input$M1Y3ScorText) & as.numeric(input$M1Y3ScorText <= 1)) {
+            updateSliderInput(session, "M1Y3Scor", value = as.numeric(input$M1Y3ScorText))
+        }
+    }
   })
 
   observeEvent(input$M1Y3Scor, {
-    label <- paste0("M1-Y = ", sprintf("%.2f", input$M1Y3Scor))
-    updateSliderInput(session, "M1Y3Scor", label = label)
+    updateTextInput(session, "M1Y3ScorText", value = input$M1Y3Scor)
+  })
+
+  observeEvent(input$XM23ScorText, {
+    if (!is.na(as.numeric(input$XM23ScorText))) {
+        if (-1 <= as.numeric(input$XM23ScorText) & as.numeric(input$XM23ScorText <= 1)) {
+            updateSliderInput(session, "XM23Scor", value = as.numeric(input$XM23ScorText))
+        }
+    }
   })
 
   observeEvent(input$XM23Scor, {
-    label <- paste0("X-M2 = ", sprintf("%.2f", input$XM23Scor))
-    updateSliderInput(session, "XM23Scor", label = label)
+    updateTextInput(session, "XM23ScorText", value = input$XM23Scor)
+  })
+
+  observeEvent(input$M2Y3ScorText, {
+    if (!is.na(as.numeric(input$M2Y3ScorText))) {
+        if (-1 <= as.numeric(input$M2Y3ScorText) & as.numeric(input$M2Y3ScorText <= 1)) {
+            updateSliderInput(session, "M2Y3Scor", value = as.numeric(input$M2Y3ScorText))
+        }
+    }
   })
 
   observeEvent(input$M2Y3Scor, {
-    label <- paste0("M2-Y = ", sprintf("%.2f", input$M2Y3Scor))
-    updateSliderInput(session, "M2Y3Scor", label = label)
+    updateTextInput(session, "M2Y3ScorText", value = input$M2Y3Scor)
+  })
+
+  observeEvent(input$M1M23ScorText, {
+    if (!is.na(as.numeric(input$M1M23ScorText))) {
+        if (-1 <= as.numeric(input$M1M23ScorText) & as.numeric(input$M1M23ScorText <= 1)) {
+            updateSliderInput(session, "M1M23Scor", value = as.numeric(input$M1M23ScorText))
+        }
+    }
   })
 
   observeEvent(input$M1M23Scor, {
-    label <- paste0("M1-M2 = ", sprintf("%.2f", input$M1M23Scor))
-    updateSliderInput(session, "M1M23Scor", label = label)
+    updateTextInput(session, "M1M23ScorText", value = input$M1M23Scor)
+  })
+
+  observeEvent(input$resetInput3, {
+    updateSliderInput(session, "XM13Scor", value = 0)
+    updateSliderInput(session, "M1Y3Scor", value = 0)
+    updateSliderInput(session, "XY3Scor", value = 0)
+    updateSliderInput(session, "XM23Scor", value = 0)
+    updateSliderInput(session, "M2Y3Scor", value = 0)
+    updateSliderInput(session, "M1M23Scor", value = 0)
   })
 
 
 
-  # # Two-Step mediation computations ----
+  ## Two-Step mediation computations ----
 
 
   # Reactive reading of the correlations and the percentile for defining the top (bottom) groups
   #
+  observeEvent(input$cutOff2SText, {
+    if (!is.na(as.numeric(input$cutOff2SText))) {
+        if (50 <= as.numeric(input$cutOff2SText) & as.numeric(input$cutOff2SText <= 99)) {
+            updateSliderInput(session, "cutOff2S", value = as.numeric(input$cutOff2SText))
+        }
+    }
+  })
+
+  observeEvent(input$cutOff2S, {
+    updateTextInput(session, "cutOff2SText", value = input$cutOff2S)
+  })
+
   quantileGroup2S <- reactive(qnorm(input$cutOff2S / 100))
   corXM2S <- reactive(input$XM2Scor)
   corMY2S <- reactive(input$MY2Scor)
@@ -120,8 +420,11 @@ server <- function(input, output, session) {
   pcorXY2S <- reactive(twoStepPcor()[1, 3])
 
 
+  d2S <- reactive({as.numeric(input$d2SText)})
+  n2S <- reactive({as.numeric(input$n2SText)})
+
   twoStepSimData <- reactive({
-    mvtnorm::rmvnorm(n = input$n2S,
+    mvtnorm::rmvnorm(n = d2S(),
                      mean = c(0, 0, 0),
                      sigma = twoStepMatrix())
   })
@@ -284,7 +587,7 @@ server <- function(input, output, session) {
   })
 
 
-  # Actual proportions in distribution -----
+  ### Actual proportions in distribution -----
   twoStepDiagonal <- reactive({
     if (quantileGroup2S() == 0) {
       propMediationDiagonal <- propXM2S() + propMY2S() + propXY2S() - .5
@@ -479,24 +782,209 @@ server <- function(input, output, session) {
   checkmark <- HTML('&#10003;')
   otimes    <- '&#8855;'
 
-  output$twoStepTable <- function() ({
+  output$twoStepTableAct <- function() ({
 
     table2S <- data.frame(Violations = c('No violation', 'No violation', 'XM', 'XM', 'MY', 'MY', 'XM; MY', 'XM; MY'),
                           X = rep(c(checkmark, otimes), 4),
                           M = rep(c(checkmark, otimes, otimes, checkmark), 2),
                           Y = c(checkmark, otimes, otimes, checkmark, otimes, checkmark, checkmark, otimes),
-                          Actual = c(rep(sprintf(format2S(), round(.5 * twoStepDiagonal(), digits2S())), 2),
-                                     rep(sprintf(format2S(), round(.5 * twoStepBadXM(), digits2S())), 2),
-                                     rep(sprintf(format2S(), round(.5 * twoStepBadMY(), digits2S())), 2),
-                                     rep(sprintf(format2S(), round(.5 * twoStepBadXMY(), digits2S())), 2)),
-                          Complete = c(rep(sprintf(format2S(), round(.5 * twoStepMediation(), digits2S())), 2),
-                                       rep(sprintf(format2S(), round(.5 * twoStepMediationBadXM(), digits2S())), 2),
-                                       rep(sprintf(format2S(), round(.5 * twoStepMediationBadMY(), digits2S())), 2),
-                                       rep(sprintf(format2S(), round(.5 * twoStepMediationBadXMY(), digits2S())), 2)),
-                          NoM = c(rep(sprintf(format2S(), round((1 - (input$cutOff2S / 100)) * propXY2S(), digits2S())), 2),
-                                  rep(sprintf(format2S(), round((1 - (input$cutOff2S / 100)) * qropXY2S(), digits2S())), 2),
-                                  rep(sprintf(format2S(), round((1 - (input$cutOff2S / 100)) * qropXY2S(), digits2S())), 2),
-                                  rep(sprintf(format2S(), round((1 - (input$cutOff2S / 100)) * propXY2S(), digits2S())), 2)))
+                          Actual = c(rep(paste0(sprintf(format2S(), round(.5 * twoStepDiagonal(), digits2S())),
+                                                ifelse(!is.na(n2S()) & n2S() > 0,
+                                                paste0(
+                                                " [",
+                                                sprintf(format2S(), round(computeLowerBound(
+                                                   proportion = .5 * twoStepDiagonal(),
+                                                   sampleSize = n2S(),
+                                                   conf.level = .95),
+                                                   digits2S())),
+                                                ", ",
+                                                sprintf(format2S(), round(computeUpperBound(
+                                                   proportion = .5 * twoStepDiagonal(),
+                                                   sampleSize = n2S(),
+                                                   conf.level = .95),
+                                                   digits2S())),
+                                                "]"),
+                                                "")
+                                              ),
+                                         2),
+                                     rep(paste0(sprintf(format2S(), round(.5 * twoStepBadXM(), digits2S())),
+                                                ifelse(!is.na(n2S()) & n2S() > 0,
+                                                paste0(
+                                                " [",
+                                                sprintf(format2S(), round(computeLowerBound(
+                                                   proportion = .5 * twoStepBadXM(),
+                                                   sampleSize = n2S(),
+                                                   conf.level = .95),
+                                                   digits2S())),
+                                                ", ",
+                                                sprintf(format2S(), round(computeUpperBound(
+                                                   proportion = .5 * twoStepBadXM(),
+                                                   sampleSize = n2S(),
+                                                   conf.level = .95),
+                                                   digits2S())),
+                                                "]"),
+                                                "")
+                                              ),
+                                         2),
+                                     rep(paste0(sprintf(format2S(), round(.5 * twoStepBadMY(), digits2S())),
+                                                ifelse(!is.na(n2S()) & n2S() > 0,
+                                                paste0(
+                                                " [",
+                                                sprintf(format2S(), round(computeLowerBound(
+                                                   proportion = .5 * twoStepBadMY(),
+                                                   sampleSize = n2S(),
+                                                   conf.level = .95),
+                                                   digits2S())),
+                                                ", ",
+                                                sprintf(format2S(), round(computeUpperBound(
+                                                   proportion = .5 * twoStepBadMY(),
+                                                   sampleSize = n2S(),
+                                                   conf.level = .95),
+                                                   digits2S())),
+                                                "]"),
+                                                "")
+                                              ),
+                                         2),
+                                     rep(paste0(sprintf(format2S(), round(.5 * twoStepBadXMY(), digits2S())),
+                                                ifelse(!is.na(n2S()) & n2S() > 0,
+                                                paste0(
+                                                " [",
+                                                sprintf(format2S(), round(computeLowerBound(
+                                                   proportion = .5 * twoStepBadXMY(),
+                                                   sampleSize = n2S(),
+                                                   conf.level = .95),
+                                                   digits2S())),
+                                                ", ",
+                                                sprintf(format2S(), round(computeUpperBound(
+                                                   proportion = .5 * twoStepBadXMY(),
+                                                   sampleSize = n2S(),
+                                                   conf.level = .95),
+                                                   digits2S())),
+                                                "]"),
+                                                "")
+                                              ),
+                                         2)))
+
+    if (quantileGroup2S() != 0) {
+
+      table2S[nrow(table2S) + 1, -c(1:4)] <- sprintf(format2S(),
+                                                     1 - colSums(apply(table2S[, -c(1:4)], 2, as.numeric)))
+      table2S[nrow(table2S), 1:4] <- c('Other', rep('-', 3))
+
+    }
+
+    table2S <- kable(table2S, align = 'c', format = 'html',
+                     escape = FALSE,
+                     col.names = c(
+                       'Pattern Violations',
+                       'X', 'M', 'Y',
+                       'Actual Proportion'
+                     )
+    ) %>%
+      kable_styling(bootstrap_options = c("striped", "responsive"),
+                    full_width = TRUE,
+                    position = "left", font_size = 14) %>%
+      column_spec(1, bold = TRUE) %>%
+      column_spec(5, width_min = paste0(.7 * max(nchar(table2S[, 5])),
+                                        "em"
+                                        )
+                  ) %>%
+      collapse_rows(columns = 1, valign = "middle") ->
+      table2S
+
+
+
+    if (!isTwoStepSemiPosDef()) {
+      table2S <- ""
+    }
+
+    return(table2S)
+  }
+  )
+
+  output$twoStepTableFull <- function() ({
+
+    table2S <- data.frame(Violations = c('No violation', 'No violation', 'XM', 'XM', 'MY', 'MY', 'XM; MY', 'XM; MY'),
+                          X = rep(c(checkmark, otimes), 4),
+                          M = rep(c(checkmark, otimes, otimes, checkmark), 2),
+                          Y = c(checkmark, otimes, otimes, checkmark, otimes, checkmark, checkmark, otimes),
+                          Complete = c(rep(paste0(sprintf(format2S(), round(.5 * twoStepMediation(), digits2S())),
+                                                ifelse(!is.na(n2S()) & n2S() > 0,
+                                                paste0(
+                                                " [",
+                                                sprintf(format2S(), round(computeLowerBound(
+                                                   proportion = .5 * twoStepMediation(),
+                                                   sampleSize = n2S(),
+                                                   conf.level = .95),
+                                                   digits2S())),
+                                                ", ",
+                                                sprintf(format2S(), round(computeUpperBound(
+                                                   proportion = .5 * twoStepMediation(),
+                                                   sampleSize = n2S(),
+                                                   conf.level = .95),
+                                                   digits2S())),
+                                                "]"),
+                                                "")
+                                              ),
+                                           2),
+                                       rep(paste0(sprintf(format2S(), round(.5 * twoStepMediationBadXM(), digits2S())),
+                                                ifelse(!is.na(n2S()) & n2S() > 0,
+                                                paste0(
+                                                " [",
+                                                sprintf(format2S(), round(computeLowerBound(
+                                                   proportion = .5 * twoStepMediationBadXM(),
+                                                   sampleSize = n2S(),
+                                                   conf.level = .95),
+                                                   digits2S())),
+                                                ", ",
+                                                sprintf(format2S(), round(computeUpperBound(
+                                                   proportion = .5 * twoStepMediationBadXM(),
+                                                   sampleSize = n2S(),
+                                                   conf.level = .95),
+                                                   digits2S())),
+                                                "]"),
+                                                "")
+                                              ),
+                                           2),
+                                       rep(paste0(sprintf(format2S(), round(.5 * twoStepMediationBadMY(), digits2S())),
+                                                ifelse(!is.na(n2S()) & n2S() > 0,
+                                                paste0(
+                                                " [",
+                                                sprintf(format2S(), round(computeLowerBound(
+                                                   proportion = .5 * twoStepMediationBadMY(),
+                                                   sampleSize = n2S(),
+                                                   conf.level = .95),
+                                                   digits2S())),
+                                                ", ",
+                                                sprintf(format2S(), round(computeUpperBound(
+                                                   proportion = .5 * twoStepMediationBadMY(),
+                                                   sampleSize = n2S(),
+                                                   conf.level = .95),
+                                                   digits2S())),
+                                                "]"),
+                                                "")
+                                              ),
+                                           2),
+                                       rep(paste0(sprintf(format2S(), round(.5 * twoStepMediationBadXMY(), digits2S())),
+                                                ifelse(!is.na(n2S()) & n2S() > 0,
+                                                paste0(
+                                                " [",
+                                                sprintf(format2S(), round(computeLowerBound(
+                                                   proportion = .5 * twoStepMediationBadXMY(),
+                                                   sampleSize = n2S(),
+                                                   conf.level = .95),
+                                                   digits2S())),
+                                                ", ",
+                                                sprintf(format2S(), round(computeUpperBound(
+                                                   proportion = .5 * twoStepMediationBadXMY(),
+                                                   sampleSize = n2S(),
+                                                   conf.level = .95),
+                                                   digits2S())),
+                                                "]"),
+                                                "")
+                                              ),
+                                           2))
+    )
 
 
     if (quantileGroup2S() != 0) {
@@ -512,15 +1000,17 @@ server <- function(input, output, session) {
                      col.names = c(
                        'Pattern Violations',
                        'X', 'M', 'Y',
-                       'Actual Proportion',
-                       'Full Mediation',
-                       'No Mediation'
+                       'Full Mediation'
                      )
     ) %>%
       kable_styling(bootstrap_options = c("striped", "responsive"),
                     full_width = TRUE,
-                    position = "left", font_size = 14)%>%
+                    position = "left", font_size = 14) %>%
       column_spec(1, bold = TRUE) %>%
+      column_spec(5, width_min = paste0(.7 * max(nchar(table2S[, 5])),
+                                        "em"
+                                        )
+                  ) %>%
       collapse_rows(columns = 1, valign = "middle") ->
       table2S
 
@@ -534,9 +1024,353 @@ server <- function(input, output, session) {
   }
   )
 
+  output$twoStepTableNo <- function() ({
+
+    table2S <- data.frame(Violations = c('No violation', 'No violation', 'XM', 'XM', 'MY', 'MY', 'XM; MY', 'XM; MY'),
+                          X = rep(c(checkmark, otimes), 4),
+                          M = rep(c(checkmark, otimes, otimes, checkmark), 2),
+                          Y = c(checkmark, otimes, otimes, checkmark, otimes, checkmark, checkmark, otimes),
+                          NoM = c(rep(paste0(sprintf(format2S(), round((1 - (input$cutOff2S / 100)) * propXY2S(), digits2S())),
+                                                ifelse(!is.na(n2S()) & n2S() > 0,
+                                                paste0(
+                                                " [",
+                                                sprintf(format2S(), round(computeLowerBound(
+                                                   proportion = .5 * (1 - (input$cutOff2S / 100)) * propXY2S(),
+                                                   sampleSize = n2S(),
+                                                   conf.level = .95),
+                                                   digits2S())),
+                                                ", ",
+                                                sprintf(format2S(), round(computeUpperBound(
+                                                   proportion = .5 * (1 - (input$cutOff2S / 100)) * propXY2S(),
+                                                   sampleSize = n2S(),
+                                                   conf.level = .95),
+                                                   digits2S())),
+                                                "]"),
+                                                "")
+                                              ),
+                                      2),
+                                  rep(paste0(sprintf(format2S(), round((1 - (input$cutOff2S / 100)) * qropXY2S(), digits2S())),
+                                                ifelse(!is.na(n2S()) & n2S() > 0,
+                                                paste0(
+                                                " [",
+                                                sprintf(format2S(), round(computeLowerBound(
+                                                   proportion = .5 * (1 - (input$cutOff2S / 100)) * qropXY2S(),
+                                                   sampleSize = n2S(),
+                                                   conf.level = .95),
+                                                   digits2S())),
+                                                ", ",
+                                                sprintf(format2S(), round(computeUpperBound(
+                                                   proportion = .5 * twoStepDiagonal(),
+                                                   sampleSize = n2S(),
+                                                   conf.level = .95),
+                                                   digits2S())),
+                                                "]"),
+                                                "")
+                                              ),
+                                      2),
+                                  rep(paste0(sprintf(format2S(), round((1 - (input$cutOff2S / 100)) * qropXY2S(), digits2S())),
+                                                ifelse(!is.na(n2S()) & n2S() > 0,
+                                                paste0(
+                                                " [",
+                                                sprintf(format2S(), round(computeLowerBound(
+                                                   proportion = .5 * twoStepDiagonal(),
+                                                   sampleSize = n2S(),
+                                                   conf.level = .95),
+                                                   digits2S())),
+                                                ", ",
+                                                sprintf(format2S(), round(computeUpperBound(
+                                                   proportion = .5 * twoStepDiagonal(),
+                                                   sampleSize = n2S(),
+                                                   conf.level = .95),
+                                                   digits2S())),
+                                                "]"),
+                                                "")
+                                              ),
+                                      2),
+                                  rep(paste0(sprintf(format2S(), round((1 - (input$cutOff2S / 100)) * propXY2S(), digits2S())),
+                                                ifelse(!is.na(n2S()) & n2S() > 0,
+                                                paste0(
+                                                " [",
+                                                sprintf(format2S(), round(computeLowerBound(
+                                                   proportion = .5 * twoStepDiagonal(),
+                                                   sampleSize = n2S(),
+                                                   conf.level = .95),
+                                                   digits2S())),
+                                                ", ",
+                                                sprintf(format2S(), round(computeUpperBound(
+                                                   proportion = .5 * twoStepDiagonal(),
+                                                   sampleSize = n2S(),
+                                                   conf.level = .95),
+                                                   digits2S())),
+                                                "]"),
+                                                "")
+                                              ),
+                                      2)))
 
 
-  # Generate plots: X -> M -> Y ----
+    if (quantileGroup2S() != 0) {
+
+      table2S[nrow(table2S) + 1, -c(1:4)] <- sprintf(format2S(),
+                                                     1 - colSums(apply(table2S[, -c(1:4)], 2, as.numeric)))
+      table2S[nrow(table2S), 1:4] <- c('Other', rep('-', 3))
+
+    }
+
+    table2S <- kable(table2S, align = 'c', format = 'html',
+                     escape = FALSE,
+                     col.names = c(
+                       'Pattern Violations',
+                       'X', 'M', 'Y',
+                       'No Mediation'
+                     )
+    ) %>%
+      kable_styling(bootstrap_options = c("striped", "responsive"),
+                    full_width = TRUE,
+                    position = "left", font_size = 14) %>%
+      column_spec(1, bold = TRUE) %>%
+      column_spec(5, width_min = paste0(.7 * max(nchar(table2S[, 5])),
+                                        "em"
+                                        )
+                  ) %>%
+      collapse_rows(columns = 1, valign = "middle") ->
+      table2S
+
+
+
+    if (!isTwoStepSemiPosDef()) {
+      table2S <- ""
+    }
+
+    return(table2S)
+  }
+  )
+
+  # output$twoStepTable <- function() ({
+  #
+  #   table2S <- data.frame(Violations = c('No violation', 'No violation', 'XM', 'XM', 'MY', 'MY', 'XM; MY', 'XM; MY'),
+  #                         X = rep(c(checkmark, otimes), 4),
+  #                         M = rep(c(checkmark, otimes, otimes, checkmark), 2),
+  #                         Y = c(checkmark, otimes, otimes, checkmark, otimes, checkmark, checkmark, otimes),
+  #                         Actual = c(rep(paste0(sprintf(format2S(), round(.5 * twoStepDiagonal(), digits2S())),
+  #                                               " [",
+  #                                               sprintf(format2S(), round(computeLowerBound(
+  #                                                  proportion = .5 * twoStepDiagonal(),
+  #                                                  sampleSize = n2S(),
+  #                                                  conf.level = .95),
+  #                                                  digits2S())),
+  #                                               ", ",
+  #                                               sprintf(format2S(), round(computeUpperBound(
+  #                                                  proportion = .5 * twoStepDiagonal(),
+  #                                                  sampleSize = n2S(),
+  #                                                  conf.level = .95),
+  #                                                  digits2S())),
+  #                                               "]"),
+  #                                        2),
+  #                                    rep(paste0(sprintf(format2S(), round(.5 * twoStepBadXM(), digits2S())),
+  #                                               " [",
+  #                                               sprintf(format2S(), round(computeLowerBound(
+  #                                                  proportion = .5 * twoStepBadXM(),
+  #                                                  sampleSize = n2S(),
+  #                                                  conf.level = .95),
+  #                                                  digits2S())),
+  #                                               ", ",
+  #                                               sprintf(format2S(), round(computeUpperBound(
+  #                                                  proportion = .5 * twoStepBadXM(),
+  #                                                  sampleSize = n2S(),
+  #                                                  conf.level = .95),
+  #                                                  digits2S())),
+  #                                               "]"),
+  #                                        2),
+  #                                    rep(paste0(sprintf(format2S(), round(.5 * twoStepBadMY(), digits2S())),
+  #                                               " [",
+  #                                               sprintf(format2S(), round(computeLowerBound(
+  #                                                  proportion = .5 * twoStepBadMY(),
+  #                                                  sampleSize = n2S(),
+  #                                                  conf.level = .95),
+  #                                                  digits2S())),
+  #                                               ", ",
+  #                                               sprintf(format2S(), round(computeUpperBound(
+  #                                                  proportion = .5 * twoStepBadMY(),
+  #                                                  sampleSize = n2S(),
+  #                                                  conf.level = .95),
+  #                                                  digits2S())),
+  #                                               "]"),
+  #                                        2),
+  #                                    rep(paste0(sprintf(format2S(), round(.5 * twoStepBadXMY(), digits2S())),
+  #                                               " [",
+  #                                               sprintf(format2S(), round(computeLowerBound(
+  #                                                  proportion = .5 * twoStepBadXMY(),
+  #                                                  sampleSize = n2S(),
+  #                                                  conf.level = .95),
+  #                                                  digits2S())),
+  #                                               ", ",
+  #                                               sprintf(format2S(), round(computeUpperBound(
+  #                                                  proportion = .5 * twoStepBadXMY(),
+  #                                                  sampleSize = n2S(),
+  #                                                  conf.level = .95),
+  #                                                  digits2S())),
+  #                                               "]"),
+  #                                        2)),
+  #                         Complete = c(rep(paste0(sprintf(format2S(), round(.5 * twoStepMediation(), digits2S())),
+  #                                               " [",
+  #                                               sprintf(format2S(), round(computeLowerBound(
+  #                                                  proportion = .5 * twoStepMediation(),
+  #                                                  sampleSize = n2S(),
+  #                                                  conf.level = .95),
+  #                                                  digits2S())),
+  #                                               ", ",
+  #                                               sprintf(format2S(), round(computeUpperBound(
+  #                                                  proportion = .5 * twoStepMediation(),
+  #                                                  sampleSize = n2S(),
+  #                                                  conf.level = .95),
+  #                                                  digits2S())),
+  #                                               "]"),
+  #                                          2),
+  #                                      rep(paste0(sprintf(format2S(), round(.5 * twoStepMediationBadXM(), digits2S())),
+  #                                               " [",
+  #                                               sprintf(format2S(), round(computeLowerBound(
+  #                                                  proportion = .5 * twoStepMediationBadXM(),
+  #                                                  sampleSize = n2S(),
+  #                                                  conf.level = .95),
+  #                                                  digits2S())),
+  #                                               ", ",
+  #                                               sprintf(format2S(), round(computeUpperBound(
+  #                                                  proportion = .5 * twoStepMediationBadXM(),
+  #                                                  sampleSize = n2S(),
+  #                                                  conf.level = .95),
+  #                                                  digits2S())),
+  #                                               "]"),
+  #                                          2),
+  #                                      rep(paste0(sprintf(format2S(), round(.5 * twoStepMediationBadMY(), digits2S())),
+  #                                               " [",
+  #                                               sprintf(format2S(), round(computeLowerBound(
+  #                                                  proportion = .5 * twoStepMediationBadMY(),
+  #                                                  sampleSize = n2S(),
+  #                                                  conf.level = .95),
+  #                                                  digits2S())),
+  #                                               ", ",
+  #                                               sprintf(format2S(), round(computeUpperBound(
+  #                                                  proportion = .5 * twoStepMediationBadMY(),
+  #                                                  sampleSize = n2S(),
+  #                                                  conf.level = .95),
+  #                                                  digits2S())),
+  #                                               "]"),
+  #                                          2),
+  #                                      rep(paste0(sprintf(format2S(), round(.5 * twoStepMediationBadXMY(), digits2S())),
+  #                                               " [",
+  #                                               sprintf(format2S(), round(computeLowerBound(
+  #                                                  proportion = .5 * twoStepMediationBadXMY(),
+  #                                                  sampleSize = n2S(),
+  #                                                  conf.level = .95),
+  #                                                  digits2S())),
+  #                                               ", ",
+  #                                               sprintf(format2S(), round(computeUpperBound(
+  #                                                  proportion = .5 * twoStepMediationBadXMY(),
+  #                                                  sampleSize = n2S(),
+  #                                                  conf.level = .95),
+  #                                                  digits2S())),
+  #                                               "]"),
+  #                                          2)),
+  #                         NoM = c(rep(paste0(sprintf(format2S(), round((1 - (input$cutOff2S / 100)) * propXY2S(), digits2S())),
+  #                                               " [",
+  #                                               sprintf(format2S(), round(computeLowerBound(
+  #                                                  proportion = .5 * (1 - (input$cutOff2S / 100)) * propXY2S(),
+  #                                                  sampleSize = n2S(),
+  #                                                  conf.level = .95),
+  #                                                  digits2S())),
+  #                                               ", ",
+  #                                               sprintf(format2S(), round(computeUpperBound(
+  #                                                  proportion = .5 * (1 - (input$cutOff2S / 100)) * propXY2S(),
+  #                                                  sampleSize = n2S(),
+  #                                                  conf.level = .95),
+  #                                                  digits2S())),
+  #                                               "]"),
+  #                                     2),
+  #                                 rep(paste0(sprintf(format2S(), round((1 - (input$cutOff2S / 100)) * qropXY2S(), digits2S())),
+  #                                               " [",
+  #                                               sprintf(format2S(), round(computeLowerBound(
+  #                                                  proportion = .5 * (1 - (input$cutOff2S / 100)) * qropXY2S(),
+  #                                                  sampleSize = n2S(),
+  #                                                  conf.level = .95),
+  #                                                  digits2S())),
+  #                                               ", ",
+  #                                               sprintf(format2S(), round(computeUpperBound(
+  #                                                  proportion = .5 * twoStepDiagonal(),
+  #                                                  sampleSize = n2S(),
+  #                                                  conf.level = .95),
+  #                                                  digits2S())),
+  #                                               "]"),
+  #                                     2),
+  #                                 rep(paste0(sprintf(format2S(), round((1 - (input$cutOff2S / 100)) * qropXY2S(), digits2S())),
+  #                                               " [",
+  #                                               sprintf(format2S(), round(computeLowerBound(
+  #                                                  proportion = .5 * twoStepDiagonal(),
+  #                                                  sampleSize = n2S(),
+  #                                                  conf.level = .95),
+  #                                                  digits2S())),
+  #                                               ", ",
+  #                                               sprintf(format2S(), round(computeUpperBound(
+  #                                                  proportion = .5 * twoStepDiagonal(),
+  #                                                  sampleSize = n2S(),
+  #                                                  conf.level = .95),
+  #                                                  digits2S())),
+  #                                               "]"),
+  #                                     2),
+  #                                 rep(paste0(sprintf(format2S(), round((1 - (input$cutOff2S / 100)) * propXY2S(), digits2S())),
+  #                                               " [",
+  #                                               sprintf(format2S(), round(computeLowerBound(
+  #                                                  proportion = .5 * twoStepDiagonal(),
+  #                                                  sampleSize = n2S(),
+  #                                                  conf.level = .95),
+  #                                                  digits2S())),
+  #                                               ", ",
+  #                                               sprintf(format2S(), round(computeUpperBound(
+  #                                                  proportion = .5 * twoStepDiagonal(),
+  #                                                  sampleSize = n2S(),
+  #                                                  conf.level = .95),
+  #                                                  digits2S())),
+  #                                               "]"),
+  #                                     2)))
+  #
+  #
+  #   if (quantileGroup2S() != 0) {
+  #
+  #     table2S[nrow(table2S) + 1, -c(1:4)] <- sprintf(format2S(),
+  #                                                    1 - colSums(apply(table2S[, -c(1:4)], 2, as.numeric)))
+  #     table2S[nrow(table2S), 1:4] <- c('Other', rep('-', 3))
+  #
+  #   }
+  #
+  #   table2S <- kable(table2S, align = 'c', format = 'html',
+  #                    escape = FALSE,
+  #                    col.names = c(
+  #                      'Pattern Violations',
+  #                      'X', 'M', 'Y',
+  #                      'Actual Proportion',
+  #                      'Full Mediation',
+  #                      'No Mediation'
+  #                    )
+  #   ) %>%
+  #     kable_styling(bootstrap_options = c("striped", "responsive"),
+  #                   full_width = TRUE,
+  #                   position = "left", font_size = 14) %>%
+  #     column_spec(1, bold = TRUE) %>%
+  #     collapse_rows(columns = 1, valign = "middle") ->
+  #     table2S
+  #
+  #
+  #
+  #   if (!isTwoStepSemiPosDef()) {
+  #     table2S <- ""
+  #   }
+  #
+  #   return(table2S)
+  # }
+  # )
+
+
+
+  ### Generate plots: X -> M -> Y ----
 
   output$twoStepMatrixCaption <- reactive({
     if (!isTwoStepSemiPosDef()) {
@@ -560,7 +1394,7 @@ server <- function(input, output, session) {
     if (!isTwoStepSemiPosDef()) {
       outText <- ""
     } else {
-      outText <- as.character(strong("Implied by", br(), "full mediation"))
+      outText <- as.character(strong("Implied by", br(), "Full Mediation"))
     }
     return(outText)
   })
@@ -569,7 +1403,7 @@ server <- function(input, output, session) {
     if (!isTwoStepSemiPosDef()) {
       outText <- ""
     } else {
-      outText <- as.character(strong("Implied by", br(), "no mediation"))
+      outText <- as.character(strong("Implied by", br(), "No Mediation"))
     }
     return(outText)
   })
@@ -672,7 +1506,7 @@ server <- function(input, output, session) {
              plotData[, 3] < -quantileGroup2S())
       }
 
-      pointColors <- rep("black", times = input$n2S)
+      pointColors <- rep("black", times = d2S())
       pointColors[colored] <- IlliniAltOrg
 
       plot3d(plotData,
@@ -739,7 +1573,7 @@ server <- function(input, output, session) {
 
 
 
-  # # Three-Step mediation computations ----
+  ## Three-Step mediation computations ----
 
   # Digits for output
   digits3S <- reactive(input$digits3S)
@@ -748,6 +1582,18 @@ server <- function(input, output, session) {
 
   # Reactive reading of the correlations and the percentile for defining the top (bottom) groups
   #
+  observeEvent(input$cutOff3SText, {
+    if (!is.na(as.numeric(input$cutOff3SText))) {
+        if (50 <= as.numeric(input$cutOff3SText) & as.numeric(input$cutOff3SText <= 99)) {
+            updateSliderInput(session, "cutOff3S", value = as.numeric(input$cutOff3SText))
+        }
+    }
+  })
+
+  observeEvent(input$cutOff3S, {
+    updateTextInput(session, "cutOff3SText", value = input$cutOff3S)
+  })
+
   quantileGroup3S <- reactive(qnorm(input$cutOff3S / 100))
   corXM13S  <- reactive(input$XM13Scor)
   corM1Y3S  <- reactive(input$M1Y3Scor)
@@ -790,8 +1636,10 @@ server <- function(input, output, session) {
   pcorXY3S <- reactive(threeStepPcor()[1, 4])
 
 
+  n3S <- reactive({as.numeric(input$n3SText)})
+
   threeStepSimData <- reactive({
-    mvtnorm::rmvnorm(n = input$n3S,
+    mvtnorm::rmvnorm(n = n3S(),
                      mean = c(0, 0, 0, 0),
                      sigma = threeStepMatrix())
   })
@@ -1034,7 +1882,7 @@ server <- function(input, output, session) {
   })
 
 
-  # Proportion in mediation diagonal -----
+  ### Proportion in mediation diagonal -----
   #
   threeStepDiagonal <- reactive({
     signXM1  <- sign(corXM13S())
@@ -1540,7 +2388,7 @@ server <- function(input, output, session) {
     ) %>%
       kable_styling(bootstrap_options = c("striped", "responsive"),
                     full_width = TRUE,
-                    position = "left", font_size = 14)%>%
+                    position = "left", font_size = 14) %>%
       column_spec(1, bold = TRUE) %>%
       collapse_rows(columns = 1, valign = "middle") ->
       table3S
@@ -1557,7 +2405,7 @@ server <- function(input, output, session) {
 
 
 
-  # Generate three-step plots: X -> M1 -> Y and X -> M2 -> Y----
+  ### Generate three-step plots: X -> M1 -> Y and X -> M2 -> Y----
 
   output$threeStepMatrixCaption <- reactive({
     if (!isThreeStepSemiPosDef()) {
@@ -1693,7 +2541,7 @@ server <- function(input, output, session) {
              plotData[, 4] < -quantileGroup3S())
       }
 
-      pointColors <- rep("black", times = input$n3S)
+      pointColors <- rep("black", times = n3S())
       pointColors[colored] <- IlliniAltOrg
 
       plot3d(plotData[, c(1, 2, 4)],
@@ -1795,7 +2643,7 @@ server <- function(input, output, session) {
              plotData[, 4] < -quantileGroup3S())
       }
 
-      pointColors <- rep("black", times = input$n3S)
+      pointColors <- rep("black", times = n3S())
       pointColors[colored] <- IlliniAltOrg
 
       plot3d(plotData[, c(1, 3, 4)],
