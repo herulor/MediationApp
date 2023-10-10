@@ -25,7 +25,7 @@ ui <- fluidPage(
     column(8,
 
            ## App title ----
-           titlePanel(HTML("What does a popuation-level mediation reveal about individual people? <br> Computing Pattern Probabilities")),
+           titlePanel(HTML("What does a population-level mediation reveal about individual people? <br> Computing Pattern Probabilities")),
     )
     ),
     p(),
